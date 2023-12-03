@@ -111,10 +111,10 @@ class Game_Env():
     def _bit_count(self, bits):
         return bin(bits).count('1')
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, num_env=0):
         # self.session_uuid = uuid.uuid4()
         current_datetime = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
-        self.session_uuid = str(current_datetime)
+        self.session_uuid = str(current_datetime) + f'_{num_env}'
         self.save_screenshots = config['save_screenshots']
         self.act_freq = config['act_freq']
         self.config = config
