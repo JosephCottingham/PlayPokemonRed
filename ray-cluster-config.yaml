@@ -1,0 +1,32 @@
+provider:
+    type: aws
+    region: us-west-2
+    availability_zone: us-west-2a
+    # Start by defining a `cloudwatch` section to enable CloudWatch integration with your Ray cluster.
+    cloudwatch:
+        agent:
+            # Path to Unified CloudWatch Agent config file
+            config: "cloudwatch/example-cloudwatch-agent-config.json"
+        dashboard:
+            # CloudWatch Dashboard name
+            name: "example-dashboard-name"
+            # Path to the CloudWatch Dashboard config file
+            config: "cloudwatch/example-cloudwatch-dashboard-config.json"
+
+auth:
+    ssh_user: ubuntu
+
+available_node_types:
+    ray.head.default:
+        node_config:
+        InstanceType: c5a.large
+        ImageId: ami-0d88d9cbe28fac870  # Unified CloudWatch agent pre-installed AMI, us-west-2
+        resources: {}
+    ray.worker.default:
+        node_config:
+            InstanceType: c5a.large
+            ImageId: ami-0d88d9cbe28fac870  # Unified CloudWatch agent pre-installed AMI, us-west-2
+            IamInstanceProfile:
+                Name: ray-autoscaler-cloudwatch-v1
+        resources: {}
+        min_workers: 0

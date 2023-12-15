@@ -1,8 +1,9 @@
 import tensorflow as tf
 import numpy as np
-from game_env import ACTION
 
-class critic(tf.keras.Model):
+from ..game_env import ACTION
+
+class Critic(tf.keras.Model):
   def __init__(self):
     super().__init__()
     self.c1 = tf.keras.layers.Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=(1, 144, 160, 1))
@@ -29,7 +30,7 @@ class critic(tf.keras.Model):
     return x
     
 
-class actor(tf.keras.Model):
+class Actor(tf.keras.Model):
   def __init__(self):
     super().__init__()
     initializer = tf.keras.initializers.Zeros()
@@ -60,18 +61,18 @@ class actor(tf.keras.Model):
     x = self.o(x)
     return x
     
-class agent():
+class Agent():
     def __init__(self):
         self.a_opt = tf.keras.optimizers.Adam(learning_rate=7e-3)
         self.c_opt = tf.keras.optimizers.Adam(learning_rate=7e-3)
-        self.actor = actor()
-        self.critic = critic()
+        self.actor = Actor()
+        self.critic = Critic()
         self.clip_pram = 0.2
 
           
-    def act(self, state, temperature=0):
+    def act(self, state, temperature=1):
       prob = self.actor(state)[0]
-      prob = np.array(prob)**(1/temperature)
+      prob = np.array(prob)**(1/1-temperature)
       p_sum = prob.sum()
       sample_temp = prob/p_sum 
       return ACTION(np.argmax(np.random.multinomial(1, sample_temp, 1))), prob

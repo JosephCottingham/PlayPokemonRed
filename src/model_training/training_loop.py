@@ -1,24 +1,13 @@
-from game_env import Game_Env
 import time
 import os
+import requests
+import logging
+
 import tensorflow as tf
 import numpy as np
-from POO.POO import agent
 
-def make_env(rank, env_conf, seed=0, num_env=0):
-    """
-    Utility function for multiprocessed env.
-    :param env_id: (str) the environment ID
-    :param num_env: (int) the number of environments you wish to have in subprocesses
-    :param seed: (int) the initial seed for RNG
-    :param rank: (int) index of the subprocess
-    """
-    def _init():
-        env = Game_Env(env_conf, num_env=num_env)
-        #env.seed(seed + rank)
-        return env
-    return _init
-
+from .game_env import Game_Env
+from .models.proximal_policy_optimization import Agent
 
 def preprocess1(states, actions, rewards, done, values, gamma):
     g = 0
@@ -26,7 +15,7 @@ def preprocess1(states, actions, rewards, done, values, gamma):
     returns = []
     for i in reversed(range(len(rewards))):
        delta = rewards[i] + gamma * values[i + 1] * done[i] - values[i]
-       g = delta + gamma * lmbda * dones[i] * g
+       g = delta + gamma * lmbda * done[i] * g
        returns.append(g + values[i])
 
     returns.reverse()
@@ -37,10 +26,24 @@ def preprocess1(states, actions, rewards, done, values, gamma):
     returns = np.array(returns, dtype=np.float32)
     return states, actions, returns, adv 
 
-def train(procnum: int, env_config: dict, max_steps: int) -> str:
-    num_cpu = 1 #64 #46  # Also sets the number of episodes per training iteration
-    env = make_env(0, env_config, num_env=procnum)()
+def download_file(url, filename):
+    logging.info(f"Downloading {url} to {filename}")
+    response = requests.get(url)
+    with open(filename, 'wb') as f:
+        f.write(response.content)
+    return filename
+
+
+def training_loop(training_loop_config: dict) -> str:
+    training_loop_config['env_config']['gb_path'] = download_file(training_loop_config['gb_path'], 'rom.gb')
+    training_loop_config['env_config']['init_state'] = download_file(training_loop_config['init_state'], 'init.state')
+
+    # Create Environment
+    env = Game_Env(training_loop_config['env_config'], num_env=0)
+
     state = env.get_current_state()
+    
+    # Session UUID for which all data will be related to
     session_uuid = env.session_uuid
 
     prev_step_reward = 0
@@ -50,14 +53,14 @@ def train(procnum: int, env_config: dict, max_steps: int) -> str:
     file1.write(f"Step,Starting Reward,Ending Reward,Reward Diff,battle type\n")
     file1.close()
 
+    # Create Agent
+    agent = Agent()
 
-    while steps < max_steps:
+    while steps < training_loop_config['max_steps']:
         steps += 1
         print(f"Step: {steps}")
 
         done = False
-        all_aloss = []
-        all_closs = []
         rewards = []
         states = []
         actions = []
@@ -70,7 +73,7 @@ def train(procnum: int, env_config: dict, max_steps: int) -> str:
         while e < 250 and prev_state.battle_type == state.battle_type:
             e+=1
             print(f'State: {state.get().shape}')
-            action, prob = agent.act(state.get(), temperature=0.1)
+            action, prob = agent.act(state.get(), temperature=training_loop_config['temperature'])
             value = agent.critic(state.get()).numpy()
 
             # state = env.step(action)
@@ -82,7 +85,6 @@ def train(procnum: int, env_config: dict, max_steps: int) -> str:
             dones.append(1-done)
             rewards.append(reward.get())
             states.append(state.get_without_element_dim())
-            #actions.append(tf.one_hot(action, 2, dtype=tf.int32).numpy().tolist())
             actions.append(action.value)
                         
             probs.append(prob)
@@ -102,7 +104,7 @@ def train(procnum: int, env_config: dict, max_steps: int) -> str:
 
 
 
-        al,cl = agent.learn(states, actions, adv, probs, returns)
+        al, cl = agent.learn(states, actions, adv, probs, returns)
         print(f"Actor Loss:\t{al}") 
         print(f"Critic Loss:\t{cl}")
 
