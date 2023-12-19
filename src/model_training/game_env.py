@@ -19,6 +19,9 @@ import hnswlib
 from pyboy.utils import WindowEvent
 from enum import Enum
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # State Enum
 class BATTLE_TYPE(Enum):
     NON_COMBAT=0
@@ -33,6 +36,11 @@ class ACTION(Enum):
     DOWN=3
     LEFT=4
     RIGHT=5
+    
+    def numpy(self) -> np.ndarray:
+        action = np.zeros(6)
+        action[self.value] = 1
+        return action
 
 ACTION_KEY_MAP = {
     ACTION.A: {
@@ -62,6 +70,10 @@ ACTION_KEY_MAP = {
 }
 
 class State():
+    current_screen: np.ndarray
+    battle_type: BATTLE_TYPE
+    pokemon_hp_percent: float
+
     def __init__(
         self,
         current_screen: np.ndarray,
@@ -75,19 +87,22 @@ class State():
     def get(self):
         return self.current_screen
 
-    def get_without_element_dim(self):
+    def get_without_element_dim(self) -> np.ndarray:
         return self.current_screen.reshape(144, 160, 1)
 
 class Reward():
-
-    def __init__(self, explore_score, gym_badges, total_pokemon_exp, total_pokemon_level):
+    def __init__(self, explore_score, gym_badges, total_pokemon_exp, total_pokemon_level, prev_total_reward):
         self.explore_score = explore_score
         self.gym_badges = gym_badges
         self.total_pokemon_exp = total_pokemon_exp
         self.total_pokemon_level = total_pokemon_level
+        self.prev_total_reward = prev_total_reward
 
-    def get(self):
+    def get_total_reward(self) -> float:
         return self.explore_score + self.gym_badges + self.total_pokemon_exp + self.total_pokemon_level
+
+    def get_new_reward(self) -> float:
+        return self.get_total_reward() - self.prev_total_reward
 
     def __str__(self) -> str:
         return f'Explore: {self.explore_score} | Badges: {self.gym_badges} | Total XP: {self.total_pokemon_exp} | Total Level: {self.total_pokemon_level}'
@@ -117,8 +132,10 @@ class Game_Env():
         current_datetime = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
         self.session_uuid = str(current_datetime) + f'_{num_env}'
         self.save_screenshots = config['save_screenshots']
-        self.act_freq = config['act_freq']
+        self.emulation_speed = config['emulation_speed']
+        self.tick_freq = config['tick_freq']
         self.config = config
+        self.prev_total_reward = Reward(0,0,0,0,0)
 
         self.pyboy = PyBoy(
                 self.config['gb_path'],
@@ -128,31 +145,32 @@ class Game_Env():
                 sound_emulated=False,
                 sound=False,
             )
-        self.pyboy.set_emulation_speed(5)
+        self.pyboy.set_emulation_speed(self.emulation_speed)
         with open(config['init_state'], "rb") as f:
             self.pyboy.load_state(f)
 
         self.screen_index = hnswlib.Index(space='l2', dim=144*160) # possible options are l2, cosine or ip
-        self.screen_index.init_index(max_elements=100000, ef_construction=100, M=16)
+        if self.config.get('checkpoint_dir'):
+            self.screen_index.load_index(os.path.join(self.config['checkpoint_dir'], 'my_index.bin'))
+        else:
+            self.screen_index.init_index(max_elements=1000, ef_construction=100, M=16)
+        
 
         # self.screen_index = faiss.IndexFlatL2(144*160, self.screen_index_path)
         self.screen = self.pyboy.botsupport_manager().screen()
 
-
-
-
         self.session_dir_path = os.path.join(os.getcwd(), '..', 'sessions', str(self.session_uuid))
         self.screenshot_path = os.path.join(self.session_dir_path, 'img')
-        self.screen_index_path = os.path.join(self.session_dir_path, 'screen_index.bin')
-        self.game_saves_path = os.path.join(self.session_dir_path, 'game_saves')
         os.makedirs(self.screenshot_path)
-        os.makedirs(self.game_saves_path)
         
-    def save_game(self, file_name: str):
-        with open(os.path.join(self.game_saves_path, file_name), "wb") as f:
+    def save(self, path: str):
+        with open(os.path.join(path, 'init.state'), "wb") as f:
             self.pyboy.save_state(f)
-        self.screen_index.save_index(self.screen_index_path)
 
+        self.screen_index.save_index(os.path.join(path, 'screen_index.bin'))
+
+    def get_total_reward(self) -> float:
+        return self.prev_total_reward.get_total_reward()
 
     def reset(self):
         # Reset the emulator
@@ -181,10 +199,10 @@ class Game_Env():
 
         if not empty:
             _, dist = self.screen_index.knn_query(flat_current_screen, k=1)
-            print(f'Distance to nearest screen: {dist[0][0]}')
+            logger.debug(f'Distance to nearest screen: {dist[0][0]}')
 
         if empty or dist[0][0] > 2_000:
-            print('Added new screen to index: ', self.screen_index.get_current_count())
+            logger.debug('Added new screen to index: ', self.screen_index.get_current_count())
             self.screen_index.add_items(
                 flat_current_screen, np.array([self.screen_index.get_current_count()])
             )
@@ -248,26 +266,25 @@ class Game_Env():
             gym_badges=badge_count,
             total_pokemon_exp=xps_sum,
             total_pokemon_level=levels_sum,
+            prev_total_reward=self.prev_total_reward.get_total_reward(),
         )
+        self.prev_total_reward = reward
 
         return reward
 
     def run_action_on_emulator(self, action):
         # press button then release after some steps
         self.pyboy.send_input(ACTION_KEY_MAP[action]['PRESS'])
-        for i in range(self.act_freq):
+        for i in range(self.tick_freq):
             # release action, so they are stateless
             if i == 8:
                 self.pyboy.send_input(ACTION_KEY_MAP[action]['RELEASE'])
             self.pyboy.tick()
 
-    def step(self, action: ACTION):
+    def step(self, action: ACTION, state: State) -> Reward:
         self.run_action_on_emulator(action)
-
-        state = self.get_current_state()
         reward = self.get_current_reward(state.current_screen)
-
-        return state, reward, False, {}
+        return reward
 
     def save_screenshot(self, current_screen):
         # file name is timestamp
