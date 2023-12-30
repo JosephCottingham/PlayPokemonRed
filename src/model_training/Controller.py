@@ -19,11 +19,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+
 class Training_Data:
     '''
     Class for storing training data
     '''
-    states: List[np.ndarray] = []
+    states: List[State] = []
     rewards: List[float] = []
     actions: List[ACTION] = []
     action_probs: List[np.ndarray] = []
@@ -36,7 +37,10 @@ class Training_Data:
         self.action_probs = []
         self.q_values = []
 
-    def add(self, states: np.ndarray, reward: float, action: ACTION, action_prob: np.ndarray, q_values: np.float64):
+    def get_prev_screens(self) -> List[np.ndarray]:
+        return [state.current_screen for state in self.states[-2:]]
+
+    def add(self, states: State, reward: float, action: ACTION, action_prob: np.ndarray, q_values: np.float64):
         self.states.append(states)
         self.rewards.append(reward)
         self.actions.append(action)
@@ -57,6 +61,7 @@ class Training_Data:
             gae_values: np.ndarray
             adv_values: np.ndarray
         '''
+        logger.info("Calculating GAE")
         # Only the last action ends the episode. This is set to zero to invalidate the final q value.
         episode_complete = np.ones(len(self.actions))
         episode_complete[-1] = 0
@@ -91,6 +96,8 @@ class Training_Data:
         # Standardizing advantage values to a mean of 0 and std of 1
         adv_values = (adv_values - np.mean(adv_values)) / (np.std(adv_values) + 1e-10)
         
+        logger.info(f"AVG GAE Values: {np.mean(gae_values)}")
+
         return gae_values, adv_values
 
 
@@ -114,18 +121,25 @@ class Controller:
         self.env = env
         self.training_loop_config = training_loop_config
         self.temperature = training_loop_config.get('temperature', 1)
+
+        self.screen_shot_freq = training_loop_config.get('screen_shot_freq')
+        self.screenshot_dir = tempfile.mkdtemp()
+        logger.info(f"Screenshot dir: {self.screenshot_dir}")
+
         if self.training_loop_config['checkpoint_dir']:
             for key, model in self.models.items():
                 model.load(self.training_loop_config['checkpoint_dir'], key)
-
+        
     def train(self):
         '''
         Trains the models
         '''
         logger.info("Training models")
+        
         episode=0
         cur_state=None
         prev_state=None
+
         while episode < self.training_loop_config['max_episodes']:
             episode+=1
             logger.info(f"Excuting Episode: {episode}")
@@ -135,12 +149,15 @@ class Controller:
                 epoch+=1
                 logger.info(f"Excuting Epoch: {epoch}")
                 cur_state = self.env.get_current_state()
-                
                 # If the battle type changed, episode is over
                 if prev_state is None or prev_state.battle_type == cur_state.battle_type:
+                    cur_state.set_prev_screens(training_data.get_prev_screens())
+                    if self.screen_shot_freq and epoch % self.screen_shot_freq == 0:
+                        cur_state.save_screenshot(self.screenshot_dir)
+                    
                     reward, action, prob, q_value = self.collect_training_data(cur_state)
                     logger.info(f"Reward: {reward.get_new_reward()}")
-                    training_data.add(cur_state.get_without_element_dim(), reward.get_new_reward(), action, prob, q_value)
+                    training_data.add(cur_state, reward.get_new_reward(), action, prob, q_value)
                     prev_state = cur_state
                 else:
                     logger.info(f"Battle type changed, ending step: {prev_state.battle_type} -> {cur_state.battle_type}")
@@ -195,13 +212,26 @@ class Controller:
         logger.info(f"Fitting model: {model_key}")
         gae_values, adv_values = training_data.get_gae()
 
-        policy_network_loss, value_function_loss = self.models[model_key].learn(
-            states=np.array(training_data.states, dtype=np.float32),
-            actions=training_data.actions,
-            advantage=adv_values,
-            action_probs=np.array(training_data.action_probs, dtype=np.float32),
-            discounted_future_rewards=np.array(gae_values, dtype=np.float32)
-        )
+        total_record_count = len(training_data.states)
+        logger.info(f"Training data size: {total_record_count}")
+        for start in range(0, total_record_count, 10):
+            logger.info(f"Training batch: {start}")
+            end = start + 10
+            # if end > len(total_record_count):
+            #     end = len(total_record_count)
+
+            logger.info(f"Training batch: {i} - {end}")
+            
+            policy_network_loss, value_function_loss = self.models[model_key].learn(
+                states=np.array(
+                    [state.get_without_element_dim() for state in training_data.states[start:end]],
+                    dtype=np.float32
+                ),
+                actions=training_data.actions[start:end],
+                advantage=adv_values[start:end],
+                action_probs=np.array(training_data.action_probs[start:end], dtype=np.float32),
+                discounted_future_rewards=np.array(gae_values[start:end], dtype=np.float32)
+            )
 
 
     def get_model_key(self, battle_type):
@@ -213,6 +243,12 @@ class Controller:
         '''
         logger.info(f"Saving checkpoint: {checkpoint_name}")
         with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
+
+            # copy screenshot dir to temp dir and clear
+            shutil.copytree(self.screenshot_dir, os.path.join(temp_checkpoint_dir, 'screenshots'))
+            shutil.rmtree(self.screenshot_dir, ignore_errors=True)
+            os.makedirs(self.screenshot_dir, exist_ok=True)
+
             checkpoint_dict = os.path.join(temp_checkpoint_dir, "checkpoint.json")
             with open(checkpoint_dict, "w") as f:
                 json.dump({"episode": episode}, f)

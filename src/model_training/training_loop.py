@@ -4,10 +4,14 @@ import requests
 import logging
 from typing import Optional
 
+import faulthandler
+faulthandler.enable()
+
 import tensorflow as tf
 import numpy as np
 from ray import train
 from ray.train import Checkpoint
+
 
 from .game_env import Game_Env
 from .models.proximal_policy_optimization import Agent
@@ -25,6 +29,7 @@ def download_file(url, filename):
 
 
 def training_loop(training_loop_config: dict):
+
     training_loop_config['env_config']['gb_path'] = download_file(training_loop_config['gb_path'], 'rom.gb')
     training_loop_config['checkpoint_dir'] = None
 

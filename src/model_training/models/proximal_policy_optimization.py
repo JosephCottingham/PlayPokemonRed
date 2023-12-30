@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 class Value_Function(tf.keras.Model):
   def __init__(self, name: str = "Value_Function"):
     super(Value_Function, self).__init__(name=name)
-    
+
+    input_shape = (1, 144, 160*3, 1)
+
     # Accepts the Action data as input
     self.action_d1 = tf.keras.layers.Dense(6,activation='sigmoid', input_shape=(1, 6))
     self.action_d2 = tf.keras.layers.Dense(32,activation='sigmoid')
@@ -19,7 +21,7 @@ class Value_Function(tf.keras.Model):
     self.action_d3 = tf.keras.layers.Dense(64,activation='sigmoid')
 
     # Accepts the State data as input
-    self.c1 = tf.keras.layers.Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=(1, 144, 160, 1))
+    self.c1 = tf.keras.layers.Conv2D(1, kernel_size=(3, 3), activation='relu', input_shape=input_shape)
     self.mp1 = tf.keras.layers.MaxPooling2D((2, 2))
     self.flatten = tf.keras.layers.Flatten()
     self.d1 = tf.keras.layers.Dense(512,activation='sigmoid')
@@ -72,26 +74,39 @@ class Policy_Network(tf.keras.Model):
     super(Policy_Network, self).__init__(name=name)
     initializer = tf.keras.initializers.Zeros()
 
+    input_shape = (1, 144, 480, 1)
+
     # Screen layers
     # kernel size is 16x16 becase the game maps can be broken down into these chunks.
-    self.c1 = tf.keras.layers.Conv2D(32, kernel_size=(16, 16), activation='sigmoid', input_shape=(1, 144, 160, 1), kernel_initializer=initializer)
+    self.c1 = tf.keras.layers.Conv2D(1, kernel_size=(16, 16), activation='sigmoid', input_shape=input_shape, kernel_initializer=initializer)
     self.mp1 = tf.keras.layers.AveragePooling2D((4, 4))
-    
+
+    # self.c1 = tf.keras.layers.MultiHeadAttention(
+    #     num_heads,
+    #     key_dim,
+    #     value_dim=None,
+    #     dropout=0.0,
+    #     use_bias=True,
+    #     output_shape=None,
+    # )
 
     self.flatten = tf.keras.layers.Flatten()
-    self.d1 = tf.keras.layers.Dense(1024, activation='sigmoid', kernel_initializer=initializer)
+    self.d1 = tf.keras.layers.Dense(512, activation='sigmoid', kernel_initializer=initializer, name='Dense_1_1024')
     self.dropout1 = tf.keras.layers.Dropout(0.15)
-    self.d2 = tf.keras.layers.Dense(512, activation='sigmoid', kernel_initializer=initializer)
+    self.d2 = tf.keras.layers.Dense(256, activation='sigmoid', kernel_initializer=initializer)
     self.dropout2 = tf.keras.layers.Dropout(0.15)
-    self.d3 = tf.keras.layers.Dense(256,activation='sigmoid', kernel_initializer=initializer)
+    self.d3 = tf.keras.layers.Dense(128,activation='sigmoid', kernel_initializer=initializer)
     self.dropout3 = tf.keras.layers.Dropout(0.15)
-    self.d4 = tf.keras.layers.Dense(128,activation='sigmoid', kernel_initializer=initializer)
+    self.d4 = tf.keras.layers.Dense(64,activation='sigmoid', kernel_initializer=initializer)
     self.o = tf.keras.layers.Dense(6,activation='softmax', kernel_initializer=initializer)
 
   def call(self, inputs, training=False):
     x = self.c1(inputs)
+    logger.info(f"C1 shape: {x.shape}")
     x = self.mp1(x)
+    logger.info(f"MP1 shape: {x.shape}")
     x = self.flatten(x)
+    logger.info(f"Flatten shape: {x.shape}")
     x = self.d1(x)
     x = self.dropout1(x)
     x = self.d2(x)
@@ -107,7 +122,7 @@ class Agent():
         self.policy_network_opt = tf.keras.optimizers.Adam(learning_rate=7e-3)
         self.value_function_opt = tf.keras.optimizers.Adam(learning_rate=7e-3)
         self.policy_network = Policy_Network()
-        self.policy_network.build(input_shape=(1, 144, 160, 1))
+        self.policy_network.build(input_shape=(1, 144, 160*3, 1))
         self.value_function = Value_Function()
         self.clip_pram = 0.2
         self.policy_network_losses = []

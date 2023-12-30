@@ -1,5 +1,6 @@
 
 from datetime import date, datetime
+from typing import Tuple, List
 import logging
 import time
 from dis import dis
@@ -71,6 +72,7 @@ ACTION_KEY_MAP = {
 
 class State():
     current_screen: np.ndarray
+    prev_screens: List[np.ndarray]
     battle_type: BATTLE_TYPE
     pokemon_hp_percent: float
 
@@ -81,14 +83,31 @@ class State():
         pokemon_hp_percent: float,
     ):
         self.current_screen = current_screen
+        self.prev_screens = []
         self.battle_type = battle_type
         self.pokemon_hp_percent = pokemon_hp_percent
 
-    def get(self):
-        return self.current_screen
+    def set_prev_screens(self, prev_screen: List[np.ndarray]):
+        self.prev_screens = prev_screen
 
-    def get_without_element_dim(self) -> np.ndarray:
-        return self.current_screen.reshape(144, 160, 1)
+    def _combine_screens(self) -> np.ndarray:
+        while len(self.prev_screens) < 2:
+            self.prev_screens.insert(0, np.zeros((1, 144, 160, 1)))
+        
+        # expected shape is (1, 144, 160*3, 1)
+        return np.concatenate(self.prev_screens + [self.current_screen], axis=2)
+
+    def get(self):
+        return self._combine_screens()
+
+    def get_without_element_dim(self) -> np.ndarray:        
+        return self._combine_screens().reshape(144, 160*3, 1)
+
+    def save_screenshot(self, screenshot_path: str):
+        file_name = datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
+        screen = (self.get_without_element_dim()*255).astype(np.uint8)
+        screen = np.concatenate([screen] * 3, axis=-1)
+        im.fromarray(screen).convert('L').save(os.path.join(screenshot_path, file_name))
 
 class Reward():
     def __init__(self, explore_score, gym_badges, total_pokemon_exp, total_pokemon_level, prev_total_reward):
