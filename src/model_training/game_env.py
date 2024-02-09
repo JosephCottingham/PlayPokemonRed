@@ -1,6 +1,6 @@
 
 from datetime import date, datetime
-from typing import Tuple, List
+from typing import Optional, Tuple, List
 import logging
 import time
 from dis import dis
@@ -16,12 +16,14 @@ from PIL import Image as im
 import numpy as np
 from pyboy import PyBoy
 import hnswlib
+import boto3
 
 from pyboy.utils import WindowEvent
 from enum import Enum
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
+logger = logging.getLogger("ray.train")
 
 # State Enum
 class BATTLE_TYPE(Enum):
@@ -70,6 +72,9 @@ ACTION_KEY_MAP = {
     },
 }
 
+s3 = boto3.client('s3')
+
+
 class State():
     current_screen: np.ndarray
     prev_screens: List[np.ndarray]
@@ -103,11 +108,20 @@ class State():
     def get_without_element_dim(self) -> np.ndarray:        
         return self._combine_screens().reshape(144, 160*3, 1)
 
-    def save_screenshot(self, screenshot_path: str):
+    def save_screenshot(self, screenshot_path:str, screenshots_s3_bucket:Optional[str]=None, screenshots_s3_path:Optional[str]=None, delete_local:bool=True):
         file_name = datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
         screen = (self.get_without_element_dim()*255).astype(np.uint8)
         screen = np.concatenate([screen] * 3, axis=-1)
-        im.fromarray(screen).convert('L').save(os.path.join(screenshot_path, file_name))
+    
+        local_path = os.path.join(screenshot_path, file_name)
+        im.fromarray(screen).convert('L').save(local_path)
+
+        if screenshots_s3_path and screenshots_s3_bucket:
+            s3.upload_file(local_path, screenshots_s3_bucket, os.path.join(screenshots_s3_path, file_name))
+            s3.upload_file(local_path, screenshots_s3_bucket, os.path.join(screenshots_s3_path, '-1.png'))
+            logger.info(f'Uploaded screenshot to s3: {os.path.join(screenshots_s3_path, file_name)}')
+            if delete_local:
+                os.remove(local_path)
 
 class Reward():
     def __init__(self, explore_score, gym_badges, total_pokemon_exp, total_pokemon_level, prev_total_reward):
@@ -150,7 +164,6 @@ class Game_Env():
         # self.session_uuid = uuid.uuid4()
         current_datetime = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
         self.session_uuid = str(current_datetime) + f'_{num_env}'
-        self.save_screenshots = config['save_screenshots']
         self.emulation_speed = config['emulation_speed']
         self.tick_freq = config['tick_freq']
         self.config = config
@@ -178,10 +191,6 @@ class Game_Env():
         # self.screen_index = faiss.IndexFlatL2(144*160, self.screen_index_path)
         self.screen = self.pyboy.botsupport_manager().screen()
 
-        self.session_dir_path = os.path.join(os.getcwd(), '..', 'sessions', str(self.session_uuid))
-        self.screenshot_path = os.path.join(self.session_dir_path, 'img')
-        os.makedirs(self.screenshot_path)
-        
     def save(self, path: str):
         with open(os.path.join(path, 'init.state'), "wb") as f:
             self.pyboy.save_state(f)
@@ -225,8 +234,6 @@ class Game_Env():
             self.screen_index.add_items(
                 flat_current_screen, np.array([self.screen_index.get_current_count()])
             )
-            current_screen=current_screen*255
-            self.save_screenshot(current_screen.reshape(144, 160))
         return self.screen_index.get_current_count() * .005
 
     def get_levels_sum(self) -> int:
@@ -240,17 +247,14 @@ class Game_Env():
 
     def get_screen(self) -> np.ndarray:
         current_screen = self.screen.screen_ndarray()
-
-        # if self.save_screenshots:
-        #     self.save_screenshot(current_screen)
-
+        
         # This removes the other two channels, so we only have the grayscale. The screen ndarray has same same value for all 3 channels so we are droping 2/3 of the data
         current_screen = current_screen[:, :, 0:1]
+        
         # Reshape the array to 1 x 160 x 143 x 1 (elements, width, height, channels) this is the format that the model expects
         current_screen = current_screen.reshape(1, 144, 160, 1)
+        
         # Scale the screen to 0-1
-        if self.save_screenshots:
-            self.save_screenshot(current_screen.reshape(144, 160))
         current_screen = current_screen/255
 
         return current_screen
@@ -304,9 +308,3 @@ class Game_Env():
         self.run_action_on_emulator(action)
         reward = self.get_current_reward(state.current_screen)
         return reward
-
-    def save_screenshot(self, current_screen):
-        # file name is timestamp
-        os.makedirs(self.screenshot_path, exist_ok=True)
-        file_name = datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
-        im.fromarray(current_screen).convert('L').save(os.path.join(self.screenshot_path, file_name))

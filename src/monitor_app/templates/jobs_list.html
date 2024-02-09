@@ -1,0 +1,40 @@
+<!-- FILEPATH: /home/joe/Projects/PlayPokemonRed/src/monitor_app/jobs_list.html -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Job List</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Job List</h1>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Job ID</th>
+                    <th>Worker ID</th>
+                    <th>Actor Class</th>
+                    <th>Status</th>
+                    <th>Start Timestamp</th>
+                    <th>End Timestamp</th>
+                    <th>Last Status Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in jobs %}
+                    <tr>
+                        <td><a href="{{ url_for('job_page', job_id=job.job_id) }}">{{ job.job_id }}</a></td>
+                        <td>{{ job.worker_id }}</td>
+                        <td>{{ job.actor_class }}</td>
+                        <td>{{ job.status }}</td>
+                        <td>{{ job.start_timestamp }}</td>
+                        <td>{{ job.end_timestamp }}</td>
+                        <td>{{ job.last_status_timestamp }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

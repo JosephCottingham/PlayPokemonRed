@@ -6,7 +6,8 @@ import logging
 from ..game_env import ACTION
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
+logger = logging.getLogger("ray.train")
 
 class Value_Function(tf.keras.Model):
   def __init__(self, name: str = "Value_Function"):
@@ -15,28 +16,30 @@ class Value_Function(tf.keras.Model):
     input_shape = (1, 144, 160*3, 1)
 
     # Accepts the Action data as input
-    self.action_d1 = tf.keras.layers.Dense(6,activation='sigmoid', input_shape=(1, 6))
-    self.action_d2 = tf.keras.layers.Dense(32,activation='sigmoid')
+    self.action_d1 = tf.keras.layers.Dense(6,activation='sigmoid', input_shape=(1, 6), name='Action_Dense_1_6')
+    self.action_d2 = tf.keras.layers.Dense(32,activation='sigmoid', name='Action_Dense_2_32')
     self.action_dropout1 = tf.keras.layers.Dropout(0.15)
-    self.action_d3 = tf.keras.layers.Dense(64,activation='sigmoid')
+    self.action_d3 = tf.keras.layers.Dense(64,activation='sigmoid', name='Action_Dense_3_64')
 
     # Accepts the State data as input
-    self.c1 = tf.keras.layers.Conv2D(1, kernel_size=(3, 3), activation='relu', input_shape=input_shape)
+    self.c1 = tf.keras.layers.Conv2D(1, kernel_size=(3, 3), activation='relu', input_shape=input_shape, name='Conv2D_1_1')
     self.mp1 = tf.keras.layers.MaxPooling2D((2, 2))
     self.flatten = tf.keras.layers.Flatten()
-    self.d1 = tf.keras.layers.Dense(512,activation='sigmoid')
+    self.d1 = tf.keras.layers.Dense(512,activation='sigmoid', name='Dense_1_512')
     self.dropout1 = tf.keras.layers.Dropout(0.15)
-    self.d2 = tf.keras.layers.Dense(256,activation='sigmoid')
+    self.d2 = tf.keras.layers.Dense(256,activation='sigmoid', name='Dense_2_256')
     self.dropout2 = tf.keras.layers.Dropout(0.15)
-    self.d3 = tf.keras.layers.Dense(64,activation='sigmoid')
+    self.d3 = tf.keras.layers.Dense(64,activation='sigmoid', name='Dense_3_64')
     self.dropout3 = tf.keras.layers.Dropout(0.15)
-    self.d4 = tf.keras.layers.Dense(32,activation='sigmoid')
 
     # Merges the two input layers
     self.merge_action_state = tf.keras.layers.Add()
 
     # Common layers
-    self.d4 = tf.keras.layers.Dense(64,activation='sigmoid')
+    self.common_d1 = tf.keras.layers.Dense(64,activation='sigmoid', name='Common_Dense_1_64')
+    self.common_d2 = tf.keras.layers.Dense(64,activation='sigmoid', name='Common_Dense_2_32')
+    self.common_dropout1 = tf.keras.layers.Dropout(0.15)
+    self.common_d3 = tf.keras.layers.Dense(16,activation='sigmoid', name='Common_Dense_3_16')
     
     # TODO how many outputs? How does this scale to be comparable with actually reward values?
     self.o = tf.keras.layers.Dense(1,activation='softmax')
@@ -66,6 +69,10 @@ class Value_Function(tf.keras.Model):
 
     # Common layers
     x = self.dropout3(merged)
+    x = self.common_d1(x)
+    x = self.common_d2(x)
+    x = self.common_dropout1(x)
+    x = self.common_d3(x)
     return self.o(x)
     
 
@@ -78,7 +85,7 @@ class Policy_Network(tf.keras.Model):
 
     # Screen layers
     # kernel size is 16x16 becase the game maps can be broken down into these chunks.
-    self.c1 = tf.keras.layers.Conv2D(1, kernel_size=(16, 16), activation='sigmoid', input_shape=input_shape, kernel_initializer=initializer)
+    self.c1 = tf.keras.layers.Conv2D(1, kernel_size=(16, 16), activation='sigmoid', input_shape=input_shape, kernel_initializer=initializer, name='Conv2D_1_1')
     self.mp1 = tf.keras.layers.AveragePooling2D((4, 4))
 
     # self.c1 = tf.keras.layers.MultiHeadAttention(
@@ -91,22 +98,19 @@ class Policy_Network(tf.keras.Model):
     # )
 
     self.flatten = tf.keras.layers.Flatten()
-    self.d1 = tf.keras.layers.Dense(512, activation='sigmoid', kernel_initializer=initializer, name='Dense_1_1024')
+    self.d1 = tf.keras.layers.Dense(512, activation='sigmoid', kernel_initializer=initializer, name='Dense_1_512')
     self.dropout1 = tf.keras.layers.Dropout(0.15)
-    self.d2 = tf.keras.layers.Dense(256, activation='sigmoid', kernel_initializer=initializer)
+    self.d2 = tf.keras.layers.Dense(256, activation='sigmoid', kernel_initializer=initializer, name='Dense_2_256')
     self.dropout2 = tf.keras.layers.Dropout(0.15)
-    self.d3 = tf.keras.layers.Dense(128,activation='sigmoid', kernel_initializer=initializer)
+    self.d3 = tf.keras.layers.Dense(128,activation='sigmoid', kernel_initializer=initializer, name='Dense_3_128')
     self.dropout3 = tf.keras.layers.Dropout(0.15)
-    self.d4 = tf.keras.layers.Dense(64,activation='sigmoid', kernel_initializer=initializer)
-    self.o = tf.keras.layers.Dense(6,activation='softmax', kernel_initializer=initializer)
+    self.d4 = tf.keras.layers.Dense(64,activation='sigmoid', kernel_initializer=initializer, name='Dense_4_64')
+    self.o = tf.keras.layers.Dense(6,activation='softmax', kernel_initializer=initializer, name='Dense_O_6')
 
   def call(self, inputs, training=False):
     x = self.c1(inputs)
-    logger.info(f"C1 shape: {x.shape}")
     x = self.mp1(x)
-    logger.info(f"MP1 shape: {x.shape}")
     x = self.flatten(x)
-    logger.info(f"Flatten shape: {x.shape}")
     x = self.d1(x)
     x = self.dropout1(x)
     x = self.d2(x)
@@ -124,6 +128,12 @@ class Agent():
         self.policy_network = Policy_Network()
         self.policy_network.build(input_shape=(1, 144, 160*3, 1))
         self.value_function = Value_Function()
+
+        # Building the model in advance to enable summary/loading of weights
+        sample_action_input = tf.constant(np.random.randint(0, 2, size=(1, 6)), dtype=tf.float32)
+        sample_state_input = tf.constant(np.random.randint(0, 2, size=(1, 144, 160*3, 1)), dtype=tf.float32)
+        
+        self.value_function(sample_state_input, sample_action_input)
         self.clip_pram = 0.2
         self.policy_network_losses = []
         self.value_function_losses = []
@@ -213,8 +223,14 @@ class Agent():
         agent = Agent(name)
         path = os.path.join(path, f'{name}')
         path = os.path.join(path, f'model')
+        logger.info(f'Loading Model {name} from: {path}')
+        
         agent.policy_network.load_weights(path+'_policy_network')
+        # agent.policy_network.summary()
+
         agent.value_function.load_weights(path+'_value_function')
+        # agent.value_function.summary()
+
         return agent
 
     def get_metrics(self):

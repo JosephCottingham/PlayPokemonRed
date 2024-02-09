@@ -19,7 +19,7 @@ training_loop_config = {
     },
     'screen_shot_freq': 10,
     'model_save_path': 'C:\\Users\\josep\\Projects\\PlayPokemonRed\\artifacts',
-    'max_episodes': 60,
+    'max_episodes': 20,
     'max_epochs': 150,
     'checkpoint_freq': 10,
     'temperature': 0.1,

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>List View Page</title>
+</head>
+<body>
+    <h1>List View Page</h1>
+    <ul>
+        {% for item in folders %}
+            <li><a href="{{ item.url }}">{{ item.name }}</a>: {{item.date}}</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>

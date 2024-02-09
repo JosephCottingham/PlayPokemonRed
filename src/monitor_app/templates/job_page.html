@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Job Page</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script>
+        function countdown() {
+            var seconds = 120;
+            var countdownElement = document.getElementById("countdown");
+
+            function updateCountdown() {
+                countdownElement.textContent = seconds + " seconds remaining";
+                seconds--;
+
+                if (seconds < 0) {
+                    location.reload();
+                }
+            }
+
+            setInterval(updateCountdown, 1000);
+        }
+    </script>
+</head>
+
+<body onload="countdown()">
+    <div class="container-fluid">
+        <a href="{{ url_for('jobs_list') }}">Back to Job List</a>
+
+        <h1>Job Data</h1>
+        <div id="job-data">
+            <!-- Display job data here -->
+            <p>Job ID: {{ job.job_id }}</p>
+            <p>End Timestamp: {{ job.end_timestamp }}</p>
+            <p>Last Status Timestamp: {{ job.last_status_timestamp }}</p>
+            <p>Status: {{ job.status }}</p>
+        </div>
+
+        <h2>Actor Data</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Latest Image</th>
+                    <th>Actor ID</th>
+                    <th>Worker ID</th>
+                    <th>Actor Class</th>
+                    <th>Status</th>
+                    <th>Start Timestamp</th>
+                    <th>End Timestamp</th>
+                    <th>Last Status Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Display actor data here -->
+                {% for actor in actors %}
+                <tr>
+                    <td><img src="{{ actor.latest_image }}" alt="Latest Image" style="width:480px;height:144px;"></td>
+                    <td>{{ actor.actor_id }}</td>
+                    <td>{{ actor.worker_id }}</td>
+                    <td>{{ actor.actor_class }}</td>
+                    <td>{{ actor.status }}</td>
+                    <td>{{ actor.start_timestamp }}</td>
+                    <td>{{ actor.end_timestamp }}</td>
+                    <td>{{ actor.last_status_timestamp }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2>Checkpoint Data</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>S3 Key</th>
+                    <th>Checkpoint Reloads</th>
+                    <th>Episode</th>
+                    <th>Epoch Count</th>
+                    <th>Previous Epoch Count</th>
+                    <th>Total Epoch Count</th>
+                    <th>Reward</th>
+                    <th>Avg Policy Network Loss</th>
+                    <th>Previous Checkpoint Path</th>
+                    <th>Actor ID</th>
+                    <th>Job ID</th>
+                    <th>Worker ID</th>
+                    <th>Created At</th>
+                    <th>Last Status Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Display checkpoint data here -->
+                {% for checkpoint in checkpoints %}
+                <tr>
+                    <td>{{ checkpoint.s3_key }}</td>
+                    <td>{{ checkpoint.checkpoint_reloads }}</td>
+                    <td>{{ checkpoint.episode }}</td>
+                    <td>{{ checkpoint.epoch_count }}</td>
+                    <td>{{ checkpoint.prev_epoch_count }}</td>
+                    <td>{{ checkpoint.total_epoch_count }}</td>
+                    <td>{{ checkpoint.reward }}</td>
+                    <td>{{ checkpoint.avg_policy_network_loss }}</td>
+                    <td><a href="{{ url_for('job_page', job_id=checkpoint.prev_checkpoint_job_id) }}">{{ checkpoint.previous_checkpoint_path }}</td>
+                    <td>{{ checkpoint.actor_id }}</td>
+                    <td>{{ checkpoint.job_id }}</td>
+                    <td>{{ checkpoint.worker_id }}</td>
+                    <td>{{ checkpoint.created_at }}</td>
+                    <td>{{ checkpoint.last_status_timestamp }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+
+        <div id="countdown"></div>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Image Dashboard</title>
+    <meta http-equiv="refresh" content="10">
+    <script>
+        setInterval(function() {
+            location.reload();
+        }, 10000);
+    </script>
+</head>
+<body>
+    <a href="/">Back</a>
+    <h1>Image Dashboard - {{ image_datetime }}</h1>
+    <img src="{{ image_url }}" alt="Image">
+    <p>Load datetime: <span id="load-datetime"></span></p>
+    <script>
+        var loadDatetimeElement = document.getElementById("load-datetime");
+        var currentDatetime = new Date();
+        loadDatetimeElement.textContent = currentDatetime.toLocaleString();
+    </script>
+</body>
+</html>

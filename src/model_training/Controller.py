@@ -6,6 +6,7 @@ import os
 from typing import Tuple, List
 import tempfile
 import json
+import shutil
 
 import numpy as np
 
@@ -14,10 +15,11 @@ from ray.train import Checkpoint, ScalingConfig
 
 from model_training.models.proximal_policy_optimization import Agent, Policy_Network, Value_Function
 from model_training.game_env import Game_Env, BATTLE_TYPE, ACTION, State, Reward
+import json
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+# logger = logging.getLogger(__name__)
+logger = logging.getLogger("ray.train")
 
 
 class Training_Data:
@@ -110,26 +112,50 @@ class Controller:
     training_loop_config: dict
 
     models = {
-        'COMBAT': Agent(),
-        'NON_COMBAT': Agent()
+        'COMBAT': Agent(name='COMBAT'),
+        'NON_COMBAT': Agent(name='NON_COMBAT')
     }
 
-    def __init__(self, env: Game_Env, training_loop_config: dict):
+    def __init__(self, env: Game_Env, training_loop_config: dict, checkpoint: Checkpoint, process_ids: dict = None):
         '''
         Constructor for Controller class.
         '''
         self.env = env
         self.training_loop_config = training_loop_config
         self.temperature = training_loop_config.get('temperature', 1)
-
+        self.process_ids = process_ids
         self.screen_shot_freq = training_loop_config.get('screen_shot_freq')
         self.screenshot_dir = tempfile.mkdtemp()
+        self.screenshots_s3_path = training_loop_config.get('screenshots_s3_path')
+        self.screenshots_s3_bucket = training_loop_config.get('screenshots_s3_bucket')
+        
+        self.total_epoch = 0
+        
         logger.info(f"Screenshot dir: {self.screenshot_dir}")
 
-        if self.training_loop_config['checkpoint_dir']:
+        if self.training_loop_config.get('checkpoint_dir'):
+            logger.info(f"Loading checkpoint: {self.training_loop_config['checkpoint_dir']}")
             for key, model in self.models.items():
+                logger.info(f"Loaded model: {key}") 
                 model.load(self.training_loop_config['checkpoint_dir'], key)
-        
+            self.checkpoint = checkpoint
+            self.prev_checkpoint_metadata = {}
+            if checkpoint:
+                self.prev_checkpoint_metadata = checkpoint.get_metadata()
+
+    def play(self):
+        '''
+        Plays the game with the model
+        '''
+        logger.info("Playing game")
+
+        while True:
+            cur_state = self.env.get_current_state()
+            # Get action from model
+            action, prob = self.models[self.get_model_key(cur_state.battle_type)].act(cur_state.get(), temperature=self.temperature)
+            logger.debug(f"Performing action: {action.name}")
+            _ = self.env.step(action, cur_state)
+
     def train(self):
         '''
         Trains the models
@@ -142,31 +168,33 @@ class Controller:
 
         while episode < self.training_loop_config['max_episodes']:
             episode+=1
-            logger.info(f"Excuting Episode: {episode}")
+            logger.info(f"Excuting Episode: {episode} in checkpoint reload: {self.training_loop_config['checkpoint_reload']}")
             epoch = 0
             training_data = Training_Data()
+            now = datetime.now()
             while epoch < self.training_loop_config['max_epochs']:
                 epoch+=1
-                logger.info(f"Excuting Epoch: {epoch}")
+                logger.debug(f"Excuting Epoch: {epoch}")
                 cur_state = self.env.get_current_state()
+                battle_type = None
                 # If the battle type changed, episode is over
                 if prev_state is None or prev_state.battle_type == cur_state.battle_type:
                     cur_state.set_prev_screens(training_data.get_prev_screens())
                     if self.screen_shot_freq and epoch % self.screen_shot_freq == 0:
-                        cur_state.save_screenshot(self.screenshot_dir)
+                        cur_state.save_screenshot(self.screenshot_dir, self.screenshots_s3_bucket, self.screenshots_s3_path, True)
                     
                     reward, action, prob, q_value = self.collect_training_data(cur_state)
-                    logger.info(f"Reward: {reward.get_new_reward()}")
+                    logger.debug(f"Reward: {reward.get_new_reward()}")
                     training_data.add(cur_state, reward.get_new_reward(), action, prob, q_value)
                     prev_state = cur_state
+                    battle_type = prev_state.battle_type
                 else:
                     logger.info(f"Battle type changed, ending step: {prev_state.battle_type} -> {cur_state.battle_type}")
+                    # Due to change in battle type, we need to add the last state to the training data and break out of the epoch loop.
+                    battle_type = prev_state.battle_type
+                    prev_state = cur_state
                     break
-            
-            # Confirm that we have a current and previous state to prevent errors.
-            assert cur_state is not None
-            assert prev_state is not None
-            
+            self.total_epoch += epoch
             if training_data.is_empty():
                 logger.info("No training data collected, skipping training likly due to battle type change")
                 continue
@@ -175,13 +203,18 @@ class Controller:
             training_data.add_q_value(np.float64(0))
 
             # Note that PyGame is paused during training, as we are not call tick on the emulator.
-            self.fit_model(self.get_model_key(prev_state.battle_type), training_data)
+            self.fit_model(self.get_model_key(battle_type), training_data)
+            time_taken_for_episode = datetime.now() - now
+            logger.info(f"Episode {episode} took {time_taken_for_episode}")
 
             # Save check point at the end of training if freq matches.
             if (episode != 0 and episode % self.training_loop_config['checkpoint_freq'] == 0) or episode == self.training_loop_config['max_episodes']:
+                now = datetime.now()
                 datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                 checkpoint_name = f"checkpoint_{episode}_{datetime_str}"
-                self.save_checkpoint(self.training_loop_config['model_save_path'], checkpoint_name)
+                self.save_checkpoint(episode, checkpoint_name)
+                time_taken_for_checkpoint = datetime.now() - now
+                logger.info(f"Checkpoint {checkpoint_name} took {time_taken_for_checkpoint}")
             else:
                 self.save_metrics_only(episode)
 
@@ -191,12 +224,12 @@ class Controller:
         '''
         Collects training data
         '''
-        logger.info("Collecting training data")
+        logger.debug("Collecting training data")
         # Get action from model
         action, prob = self.models[self.get_model_key(cur_state.battle_type)].act(cur_state.get(), temperature=self.temperature)
         q_value = self.get_q_value(cur_state, action)
         
-        logger.info(f"Performing action: {action.name}")
+        logger.debug(f"Performing action: {action.name}")
         reward = self.env.step(action, cur_state)
         
         return reward, action, prob, q_value
@@ -214,13 +247,13 @@ class Controller:
 
         total_record_count = len(training_data.states)
         logger.info(f"Training data size: {total_record_count}")
-        for start in range(0, total_record_count, 10):
-            logger.info(f"Training batch: {start}")
-            end = start + 10
-            # if end > len(total_record_count):
-            #     end = len(total_record_count)
+        for start in range(0, total_record_count, 100):
+            # logger.info(f"Training batch: {start}")
+            end = start + 100
+            if end > total_record_count:
+                end = total_record_count
 
-            logger.info(f"Training batch: {i} - {end}")
+            logger.info(f"Training batch: {start} - {end}")
             
             policy_network_loss, value_function_loss = self.models[model_key].learn(
                 states=np.array(
@@ -249,11 +282,6 @@ class Controller:
             shutil.rmtree(self.screenshot_dir, ignore_errors=True)
             os.makedirs(self.screenshot_dir, exist_ok=True)
 
-            checkpoint_dict = os.path.join(temp_checkpoint_dir, "checkpoint.json")
-            with open(checkpoint_dict, "w") as f:
-                json.dump({"episode": episode}, f)
-            print(checkpoint_dict)
-
             model_count = 0
             avg_policy_network_loss = 0
 
@@ -273,6 +301,20 @@ class Controller:
             metrics['total_reward'] = total_reward
 
             checkpoint = Checkpoint.from_directory(temp_checkpoint_dir)
+            metadata = {
+                "checkpoint_reloads": self.prev_checkpoint_metadata.get('checkpoint_reloads', 0) + 1,
+                "episode": episode,
+                "epoch_count": self.total_epoch,
+                "prev_epoch_count": self.prev_checkpoint_metadata.get('total_run_epoch', 0),
+                "total_epoch_count": self.total_epoch + self.prev_checkpoint_metadata.get('total_run_epoch', 0),
+                "reward": total_reward,
+                "avg_policy_network_loss": avg_policy_network_loss,
+                "previous_checkpoint_path": self.checkpoint.path,
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            metadata.update(self.process_ids)
+
+            checkpoint.set_metadata(metadata)
             train.report(metrics, checkpoint=checkpoint)
     
     def save_metrics_only(self, episode: int):
