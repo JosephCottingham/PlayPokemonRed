@@ -1,6 +1,6 @@
 # PlayPokemonRed
 
-![Pokemon Game Img](screenshots/POKEMON RED-2024.02.06-12.21.31.png)
+![Pokemon Game Img](https://github.com/JosephCottingham/PlayPokemonRed/blob/dev/screenshots/POKEMON%20RED-2024.02.06-12.21.31.png)
 
 ## Prerequisites
 
