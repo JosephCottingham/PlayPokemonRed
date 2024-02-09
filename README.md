@@ -75,6 +75,8 @@ ray down ray-cluster-config.yaml -y
 ## Monitoring
 
 - Monitoring of resources, and logs can be done via the Ray dashboard avaible [Here](http://127.0.0.1:8265) if you used the setup above.
+  ![Ray Dashboard Img](https://github.com/JosephCottingham/PlayPokemonRed/blob/dev/screenshots/RayDashboard.png)
+
 - To monitor checkpoints, track what part of the game the AI is exploring and provide organized access to metadata. You can run the custom webapp with the below commands.
   ```bash
     cd src/monitor_app
@@ -83,3 +85,6 @@ ray down ray-cluster-config.yaml -y
   ```
   The app will be deployed [here](http://127.0.0.1:5000/)
   *Please note that on line 27 of app.py the S3 bucket used is hard coded please replace with one you have access to.*
+  *Please note that this webapp is extremely basic, and not representative of my webdev skills*
+
+  ![Custom Dashboard Img](https://github.com/JosephCottingham/PlayPokemonRed/blob/dev/screenshots/JobPage2.png)
